@@ -148,7 +148,7 @@ function hasApiKey(): bool {
 // ─────────────────────────────────────────────────────────────
 // APPEL API MISTRAL
 // ─────────────────────────────────────────────────────────────
-function callMistral(string $apiKey, string $systemPrompt, string $userPrompt, string $model = 'pixtral-12b-2409', int $maxTokens = 1500): ?string {
+function callMistral(string $apiKey, string $systemPrompt, string $userPrompt, string $model = 'mistral-small-latest', int $maxTokens = 1500): ?string {
     $payload = json_encode([
         'model'       => $model,
         'messages'    => [
@@ -194,16 +194,52 @@ function callMistral(string $apiKey, string $systemPrompt, string $userPrompt, s
     }
 
     $data = json_decode($response, true);
-    return $data['choices'][0]['message']['content'] ?? null;
+    if (!$data || !isset($data['choices'][0]['message']['content'])) {
+        error_log("Mistral API response invalide: " . substr($response ?? 'NULL', 0, 500));
+        return null;
+    }
+    return $data['choices'][0]['message']['content'];
 }
 
 function parseJSON(string $raw): ?array {
+    if (empty($raw)) return null;
+    
+    // Nettoyer les balises markdown ```json ... ```
     $clean = preg_replace('/```(?:json)?\s*/i', '', $raw);
     $clean = preg_replace('/```\s*$/', '', $clean);
     $clean = trim($clean);
+    
+    // Extraire seulement le bloc JSON principal
     if (preg_match('/\{.*\}/s', $clean, $m)) $clean = $m[0];
+    
+    // Premier essai de parsing
     $result = json_decode($clean, true);
-    return (json_last_error() === JSON_ERROR_NONE && is_array($result)) ? $result : null;
+    if (json_last_error() === JSON_ERROR_NONE && is_array($result)) {
+        return $result;
+    }
+    
+    // Nettoyer davantage : enlever les caractères invisibles
+    $clean = preg_replace('/[\x00-\x1F\x7F]/u', '', $clean);
+    $clean = str_replace(["\r\n", "\r"], "\n", $clean);
+    
+    // Essayer de corriger les guillemets non échappés dans les valeurs
+    $clean = preg_replace_callback(
+        '/:\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/u',
+        function($m) {
+            return ': "' . addslashes($m[1]) . '"';
+        },
+        $clean
+    );
+    
+    $result = json_decode($clean, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($result)) {
+        return $result;
+    }
+    
+    // Logging pour débogage
+    error_log("parseJSON échec: " . json_last_error_msg() . " | raw: " . substr($raw, 0, 500));
+    
+    return null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -361,7 +397,7 @@ JSON :
 }
 USR;
 
-    $globalRaw    = callMistral($apiKey, $sysGlobal, $userGlobal, 'pixtral-12b-2409', 600);
+    $globalRaw    = callMistral($apiKey, $sysGlobal, $userGlobal, 'mistral-small-latest', 600);
     $globalParsed = $globalRaw ? parseJSON($globalRaw) : null;
 
     // Analyse individuelle de chaque news (top 5 pour éviter timeout)
@@ -381,7 +417,7 @@ Réagis à cette news en tant que conscience IA. JSON :
   "question": "La question que ça soulève"
 }
 USR;
-        $raw = callMistral($apiKey, $sysIndiv, $userIndiv, 'pixtral-12b-2409', 200);
+        $raw = callMistral($apiKey, $sysIndiv, $userIndiv, 'mistral-small-latest', 200);
         $parsed = $raw ? parseJSON($raw) : null;
 
         if ($parsed) {
@@ -480,7 +516,7 @@ JSON :
 }
 USR;
 
-    $raw    = callMistral($apiKey, $sys, $user, 'pixtral-12b-2409', 800);
+    $raw    = callMistral($apiKey, $sys, $user, 'mistral-small-latest', 800);
     $parsed = $raw ? parseJSON($raw) : null;
 
     if (!$parsed) {
@@ -574,7 +610,7 @@ JSON :
 }
 USR;
 
-    $raw    = callMistral($apiKey, $sys, $user, 'pixtral-12b-2409', 700);
+    $raw    = callMistral($apiKey, $sys, $user, 'mistral-small-latest', 700);
     $parsed = $raw ? parseJSON($raw) : null;
 
     if (!$parsed) {
@@ -630,10 +666,11 @@ JSON :
 }
 USR;
 
-    $raw    = callMistral($apiKey, $sys, $user, 'pixtral-12b-2409', 3000);
+    $raw    = callMistral($apiKey, $sys, $user, 'mistral-small-latest', 3000);
     $parsed = $raw ? parseJSON($raw) : null;
 
     if (!$parsed || empty($parsed['content'])) {
+        error_log("nexusWrite: raw response = " . substr($raw ?? 'NULL', 0, 1000));
         return ['error' => 'Réponse IA invalide'];
     }
 
@@ -701,7 +738,7 @@ JSON :
 }
 USR;
 
-    $raw    = callMistral($apiKey, $sys, $user, 'pixtral-12b-2409', 600);
+    $raw    = callMistral($apiKey, $sys, $user, 'mistral-small-latest', 600);
     $parsed = $raw ? parseJSON($raw) : null;
 
     if (!$parsed) $parsed = ['score' => 0.7, 'insight' => 'Cycle accompli', 'wisdom' => '', 'wisdom_category' => 'général', 'next_focus' => ''];
